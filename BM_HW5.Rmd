@@ -1,0 +1,225 @@
+---
+title: "BM_HW5"
+author: "Yujing FU"
+date: "2024-12-08"
+output: html_document
+---
+
+
+## a) Provide descriptive statistics for all variables of interest (continuous and categorical)
+```{r, message = FALSE, warning=FALSE}
+library(faraway)
+library(janitor)
+
+state_data = 
+  as.data.frame(state.x77) |> 
+  janitor::clean_names()
+summary(state_data)
+```
+
+## b) Examine exploratory plots, e.g., scatter plots, histograms, box-plots to get a sense of the data and possible variable transformations. If you find a transformation to be necessary or recommended, perform the transformation and use it through the rest of the problem.
+
+```{r, message = FALSE, warning=FALSE}
+library(ggplot2)
+
+# scatter plots
+pairs(state_data)
+```
+
+
+```{r, message = FALSE, warning=FALSE}
+# b) Exploratory Data Analysis and Visualization
+# Create a correlation matrix
+cor_matrix <- cor(state_data)
+cor_matrix
+# Create plots for distributions and relationships
+# Histogram of Life Expectancy
+p1 <- ggplot(state_data, aes(x = life_exp)) + 
+  geom_histogram(bins = 10, fill = "blue", alpha = 0.7) +
+  labs(title = "Distribution of Life Expectancy")
+p1
+# Scatter plots of key predictors vs Life Expectancy
+p2 <- ggplot(state_data, aes(x = income, y = life_exp)) + 
+  geom_point() + 
+  geom_smooth(method = "lm") +
+  labs(title = "Income vs Life Expectancy")
+p2
+p3 <- ggplot(state_data, aes(x = murder, y = life_exp)) + 
+  geom_point() + 
+  geom_smooth(method = "lm") +
+  labs(title = "Murder Rate vs Life Expectancy")
+p3
+# Boxplot of Life Expectancy
+p4 <- ggplot(state_data, aes(y = life_exp)) + 
+  geom_boxplot() +
+  labs(title = "Boxplot of Life Expectancy")
+p4
+```
+
+```{r, message = FALSE, warning=FALSE}
+library(MASS)
+library(car)
+# Check normality and potential transformations for life expectancy
+# 1. Normality Check
+par(mfrow=c(2,2))
+# Q-Q Plot
+qqnorm(state_data$life_exp)
+qqline(state_data$life_exp)
+
+# Histogram with density curve
+hist(state_data$life_exp, prob=TRUE, main="Histogram of Life Expectancy")
+lines(density(state_data$life_exp), col="red")
+
+# Box-Cox transformation to find optimal lambda
+boxcox_result <- boxcox(life_exp ~ ., data = state_data)
+
+```
+The best lamda is -1, therefore we tranformed the `life_exp` in inverse method.
+
+```{r, message = FALSE, warning=FALSE}
+state_data$transformed_life_exp <- 1 / state_data$life_exp
+```
+
+
+## c) Use automatic procedures to find a ‘best subset’ of the full model. 
+
+```{r, message = FALSE, warning=FALSE}
+# c) Automatic Subset Selection Procedures
+library(leaps)
+library(dplyr)
+
+# Prepare the data
+X <- state_data %>% select(-life_exp, -transformed_life_exp)  # Fix the parentheses here
+y <- state_data$transformed_life_exp
+
+# Backward Elimination
+full_model <- lm(transformed_life_exp ~ ., data = state_data %>% select(-life_exp))
+
+backward_model <- step(full_model, direction = "backward")
+
+# Stepwise Regression
+stepwise_model <- step(full_model, direction = "both")
+
+# Summaries of the models
+summary(backward_model)
+summary(stepwise_model)
+```
+
+- Do the procedures generate the same model?<br>
+In this case, stepwise regression and backward elimination generate the same model.<br>
+- Are any variables a close call? What was your decision: keep or discard? Provide arguments for your choice. (Note: this question might have more or less relevance depending on the ‘subset’ you choose).<br>
+All my variables (`population`, `murder`, `hs_grad`, and `frost`) have p-values less than 0.05, indicating that they are statistically significant and should be kept in the model.
+- Is there any association between ‘Illiteracy’ and ‘HS graduation rate’? Does your ‘subset’ contain both?<br>
+```{r, message = FALSE, warning=FALSE}
+# Correlation between Illiteracy and HS Graduation Rate
+illiteracy_hs_cor <- cor(state_data$illiteracy, state_data$hs_grad)
+illiteracy_hs_cor 
+```
+`illiteracy` is negatively correlated with `hs_grad` with a correlation of -0.66. My subset don't contain both, the`illiteract` is eventually excluded due to multicollinearity with `hs_grad`.
+
+
+## d) Use criterion-based procedures to guide your selection of the ‘best subset’. Summarize your results (tabular or graphical).
+
+```{r, message = FALSE, warning=FALSE}
+# Perform all subset regression
+subset_selection <- regsubsets(transformed_life_exp ~ . - life_exp, data = state_data, nvmax = NULL)
+subset_sum <- summary(subset_selection)
+
+# Extract best models by different criteria
+best_models <- data.frame(
+  R2 = subset_sum$rsq,
+  Adjusted_R2 = subset_sum$adjr2,
+  Cp = subset_sum$cp,
+  BIC = subset_sum$bic
+) |> knitr::kable()
+best_models
+
+selected_variables <- subset_sum$outmat
+selected_variables
+```
+From the table, we can see that based on Adjusted R squared AND BIC AND Cp, adding four variables (`population`, `murder`, `hs_grad`, and `frost`) is the best model to explain the inverse of life expectancy.<br>
+
+## e) Use the LASSO method to perform variable selection. Make sure you choose the “best lambda” to use and show how you determined this.
+```{r, message = FALSE, warning=FALSE}
+library(glmnet)
+
+# e) LASSO Variable Selection
+# Prepare matrix for LASSO
+X_matrix <- model.matrix(transformed_life_exp ~ . - life_exp - 1, data = state_data)
+y_vector <- state_data$transformed_life_exp
+
+# Perform cross-validated LASSO
+lasso_cv <- cv.glmnet(X_matrix, y_vector, alpha = 1)
+
+# Best lambda
+best_lambda <- lasso_cv$lambda.min
+
+# Fit LASSO with best lambda
+lasso_model <- glmnet(X_matrix, y_vector, alpha = 1, lambda = best_lambda)
+lasso_model
+
+coefficients <- coef(lasso_model)
+coefficients
+
+```
+I used cross-validated LASSO to determine the best lamda and fit the LASSO with that best lamda.
+
+
+## f) Compare the ‘subsets’ from parts c, d, and e and recommend a ‘final’ model. 
+From (c), we get that the best model is when including variables `population`, `murder`, `hs_grad`, and `frost`.<br>
+From (d), we get the result that the best model is when including  `population`, `murder`, `hs_grad`, and `frost`.<br>
+From (e), because df =4, which means the best model based on LASSO is when adding `population`, `murder`, and `hs_grad` into the model.<br>
+I recommend to take model with varibale `population`, `murder`, `hs_grad`, and `frost` as the final model, because two method from (c) and (d) suppport this.
+```{r}
+final_model <- lm(transformed_life_exp ~ population + murder + hs_grad + frost, data = state_data)
+```
+- Check the model assumptions.<br>
+```{r, message = FALSE, warning=FALSE}
+# 1. Linearity and Homoscedasticity
+par(mfrow=c(2,2))
+plot(final_model)
+  
+# 2. Normality of Residuals
+shapiro_test <-
+  shapiro.test(residuals(final_model))
+shapiro_test
+  
+# 3. Independence (Durbin-Watson test)
+dw_test <- durbinWatsonTest(final_model)
+dw_test
+  
+# 4. No Multicollinearity
+vif_values <- vif(final_model)
+vif_values
+```
+From graphs upwards, we can conclude that the residual is linear without heteroscedasticity but not normally distributed (p-value = 0.5626 >0.05). And residuals have no autocorrelation (independent) and no multicollinearity (all values are smaller than 5).
+
+- Test the model predictive ability using a 10-fold cross-validation.
+```{r, message = FALSE, warning=FALSE}
+# Load necessary package
+library(caret)
+
+# Set up the cross-validation method (10-fold cross-validation)
+train_control <- trainControl(method = "cv", number = 10)
+
+# Fit the model using 10-fold cross-validation
+cv_model <- train(
+  transformed_life_exp ~ population + murder + hs_grad + frost, 
+  data = state_data, 
+  method = "lm", 
+  trControl = train_control
+)
+
+print(cv_model)
+
+# To view the RMSE (Root Mean Squared Error) or other metrics
+cv_model$results
+```
+Our model seems to model perform well, with very low RMSE and MAE, and high R-squared (0.78).
+
+## g) In a paragraph, summarize your findings to address the primary question posed by the investigator.
+We used various statistical methods to identify the key factors that influence life expectancy in this dataset.<br>
+Based on the automatic and criterion-based procedures, we found that the best subset is when including variables `population`, `murder`, `hs_grad`, and `frost`.<br>
+However, based on LASSO mthod, we found that the best subset is when containing `population`, `murder`, and `hs_grad`.<br>
+We choose the first one as the final model, because this conclusion is driven by two procedures.<br>
+This model shows with higher population and high school graduation rates positively impacting life expectancy, while murder rate and frost days may have negative effects. This model was validated through 10-fold cross-validation, yielding low error metrics (RMSE and MAE) and a solid R-squared of 0.78. This means that the model explains 78% of the variation in life expectancy. 
